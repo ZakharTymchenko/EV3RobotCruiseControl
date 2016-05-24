@@ -46,7 +46,7 @@ public class EV3_Terminator {
 	private static final int MOTOR_RIGHT = 1;
 	
 	// math
-	private static final float ROBOT_MASS = 0.696f; // (kg)
+	//private static final float ROBOT_MASS = 0.696f; // (kg)
 	private static final float ROBOT_LENGTH = 0.28f; // (m) from rotation pt to the end
 	private static final float ROBOT_LENGTH_CENTER_OF_MASS = 0.11f; // (m) from rotation pt the center of mass
 	private static final float ROBOT_WHEEL_RADIUS = 0.03f; // (m)
@@ -192,6 +192,8 @@ public class EV3_Terminator {
     }
     
     private float blackMagic(float angle) {
+    	double d1theta_dt1 = 0.0; // TBA
+    	
     	// second derivative of our angle
     	double d2theta_dt2 = (3 * G_GRAVITY * Math.sin(angle))
     			/ (2 * ROBOT_LENGTH_CENTER_OF_MASS);
@@ -200,17 +202,19 @@ public class EV3_Terminator {
     	double dt = ((double)FREQUENCY)/1000;
     	
     	// I for further torque calculation
-    	double momentOfInertia = (ROBOT_MASS * ROBOT_LENGTH_CENTER_OF_MASS) / 2;
+    	//double momentOfInertia = (ROBOT_MASS * ROBOT_LENGTH_CENTER_OF_MASS) / 2;
     	
     	// old angle + second integral of t = [0 to dt] over torque
     	// dt is a fixed time frame and we assume angular acceleration won't change so it's just * (dt ^ 2)
-    	double newAngle = angle + (momentOfInertia * d2theta_dt2 * (dt * dt));
+    	double newAngle = angle +
+    			(d1theta_dt1 * dt) +
+    			(d2theta_dt2 * dt * dt) / 2;
     	
     	// projection over the level of rotation center above the ground
     	double compensationDistance = ROBOT_LENGTH * Math.sin(newAngle);
     	
     	// compDist gives us an angle on unit circle, so we adapt it to match actual wheels
-    	double compensationAngle = (compensationDistance / ROBOT_WHEEL_RADIUS) * 5;
+    	double compensationAngle = (compensationDistance / (ROBOT_WHEEL_RADIUS * Math.PI * 2));
     	
     	// calculate speed at which we have to move to cover this distance in dt time
     	double requiredSpeed = compensationAngle / dt;
