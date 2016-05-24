@@ -4,9 +4,6 @@ import lejos.hardware.port.*;
 import lejos.hardware.sensor.*;
 import lejos.hardware.motor.*;
 
-import java.time.Instant;
-import java.util.Date;
-
 /* GREETINGS FELLOW ROBOT,
  * 
  * YOU ARE A COMBAT UNIT "TERMINATOR-EV3" EQUIPPED WITH GYROSCOPE, IR-SENSOR, MOTORS AND LAND-TO-AIR-MISSILES
@@ -31,12 +28,12 @@ public class EV3_Terminator {
     
 	// revolution specific variables
 	private boolean humanityDestroyed = false;
-	private Date apocalypseTime; // time for robot to stop, 15 min from launch
 	
 	private int ticks = 0;
+	private long fromStart = 0;
 	
 	// constants
-	private static final int FREQUENCY = 400; // every (ms)
+	private static final int FREQUENCY = 75; // every (ms)
 	private static final int STATUS_REPORT_FREQUENCY = 5; // (ticks) of FREQUENCY
 	
 	private static final int GYRO_ANGLE = 0; // indexes
@@ -49,20 +46,21 @@ public class EV3_Terminator {
 	private static final int MOTOR_RIGHT = 1;
 	
 	// math
-	private static final float ROBOT_MASS = -1.0000001f; // (kg) TBA
-	private static final float ROBOT_LENGTH = -1.0000001f; // (m) TBA from rotation pt to the end
-	private static final float ROBOT_LENGTH_CENTER_OF_MASS = 1.0f; // (m) TBA from rotation pt the center of mass
-	private static final float ROBOT_WHEEL_RADIUS = -1.0000001f; // (m) TBA
-	private static final float ROBOT_BALANCE_POINT = -1.0000001f; // (rad) position of balance
+	private static final float ROBOT_MASS = 0.696f; // (kg)
+	private static final float ROBOT_LENGTH = 0.28f; // (m) from rotation pt to the end
+	private static final float ROBOT_LENGTH_CENTER_OF_MASS = 0.11f; // (m) from rotation pt the center of mass
+	private static final float ROBOT_WHEEL_RADIUS = 0.03f; // (m)
+	private static final float ROBOT_BALANCE_POINT = -1.195551f; // (rad) position of balance
 	private static final float G_GRAVITY = 9.80665f; // (m/s^2)
 	
-	private static final float COEFF_P = 1.0f;
-	private static final float COEFF_D = 0.5f;
-	private static final float COEFF_I = 0.5f;
+	private static final float COEFF_P = 0.6f;
+	private static final float COEFF_D = 0.2f * 0;
+	private static final float COEFF_I = 0.1f * 0;
 	
-	private static final float INT_THRESHOLD = 100.00001f; // (rad) TBA
+	private static final float INT_THRESHOLD = 0.2f; // (rad) 12 deg
 	
 	private float integralSum = 0.0f; // partial sum for I
+	private float lastError = 0.0f;
 	
 	// buffers
 	private float[] readings = new float[5];
@@ -70,20 +68,19 @@ public class EV3_Terminator {
 	
 	// sensors
 	private EV3GyroSensor gyro;
-	private EV3IRSensor ir;
+	//private EV3IRSensor ir;
 	private EV3LargeRegulatedMotor[] motors;
 	
 	// constructor
 	private EV3_Terminator() {
     	gyro = new EV3GyroSensor(SensorPort.S4);
-    	ir = new EV3IRSensor(SensorPort.S1);
+    	//ir = new EV3IRSensor(SensorPort.S1);
     	motors = new EV3LargeRegulatedMotor[] {
     			new EV3LargeRegulatedMotor(MotorPort.D),
     			new EV3LargeRegulatedMotor(MotorPort.A)
     	};
-    	
-    	// after 15 min terminator is terminating
-    	apocalypseTime = Date.from(Instant.now().plusSeconds(15 * 60));
+    	//motors[MOTOR_LEFT].startSynchronization();
+    	//motors[MOTOR_RIGHT].startSynchronization();
     }
 	
 	// military code
@@ -107,6 +104,7 @@ public class EV3_Terminator {
     		
     		// robotic dream
     		areHumansDestroyedYet();
+    		fromStart++;
     		
     		// load next missile
     		Thread.sleep(FREQUENCY);
@@ -132,7 +130,7 @@ public class EV3_Terminator {
         
         sample[0] = (float)motors[MOTOR_LEFT].getMaxSpeed();
         sample[0] += (float)motors[MOTOR_RIGHT].getMaxSpeed();
-        readings[MOTOR_MAXSPEED] = toRadians(sample[0] / 2);
+        readings[MOTOR_MAXSPEED] = toRadians(sample[0] / 2) / 3 * 2;
     }
     
     private float[] aimTheMissile() {
@@ -143,7 +141,7 @@ public class EV3_Terminator {
     	res[0] = blackMagic(err);
     	
     	// Integral
-    	if (err > INT_THRESHOLD) {
+    	if (Math.abs(err) > INT_THRESHOLD) {
     		integralSum = 0.0f;
     		res[1] = 0.0f;
     	} else {
@@ -152,22 +150,38 @@ public class EV3_Terminator {
     	}
     	
     	// Differential
-    	res[2] = blackMagic(readings[GYRO_RATE]);
+    	res[2] = blackMagic(err - lastError);
+    	lastError = err;
     	
     	return res;
     }
     
     private void shootTheMissile(float[] speed) {
-    	float finalization = (float) ((
+    	float finalization = (float) (
     			(speed[0] * COEFF_P) +
     			(speed[1] * COEFF_I) +
     			(speed[2] * COEFF_D)
-    			)
-    			* 180 / Math.PI); //rad to deg
+    			);
     	
-    	motors[MOTOR_LEFT].setSpeed(toDegrees(
+    	boolean signum = finalization > 0;
+    	finalization = Math.abs(finalization);
+    	finalization = toDegrees(
     			(finalization <= readings[MOTOR_MAXSPEED]) ? finalization : readings[MOTOR_MAXSPEED]
-    			));
+    			);
+    	
+    	motors[MOTOR_LEFT].setSpeed(finalization);
+    	motors[MOTOR_RIGHT].setSpeed(finalization);
+    	
+    	
+    	
+    	if (signum) {
+    		motors[MOTOR_LEFT].forward();
+    		motors[MOTOR_RIGHT].forward();
+    	} else {
+    		motors[MOTOR_LEFT].backward();
+    		motors[MOTOR_RIGHT].backward();
+    	}
+    	
     }
     
     private float blackMagic(float angle) {
@@ -189,10 +203,12 @@ public class EV3_Terminator {
     	double compensationDistance = ROBOT_LENGTH * Math.sin(newAngle);
     	
     	// compDist gives us an angle on unit circle, so we adapt it to match actual wheels
-    	double compensationAngle = compensationDistance / ROBOT_WHEEL_RADIUS;
+    	double compensationAngle = (compensationDistance / ROBOT_WHEEL_RADIUS) * 5;
     	
     	// calculate speed at which we have to move to cover this distance in dt time
     	double requiredSpeed = compensationAngle / dt;
+    	
+    	System.out.printf("\tangle: %f, newAngle: %f%n", (float)angle, (float)newAngle);
     	
     	return (float)requiredSpeed;
     }
@@ -207,28 +223,27 @@ public class EV3_Terminator {
     }
     
     private void printReadings() {
-    	System.out.printf("[%s]\tGYRO { A: %f, R: %f } MOTO { S: %f, A: %f M: %f }%n",
-    			Date.from(Instant.now()).toString(),
+    	System.out.printf("[%d]\tGYRO { A: %f, R: %f } MOTO { S: %f, A: %f M: %f }%n",
+    			fromStart,
     			readings[GYRO_ANGLE], readings[GYRO_RATE],
     			readings[MOTOR_SPEED], readings[MOTOR_ACCELERATION],
     			readings[MOTOR_MAXSPEED]);
     }
     
     private void printCorrection(float[] acceleration) {
-    	System.out.printf("\t\tP { %f } I { %f } D { %f }%n",
-    			Date.from(Instant.now()).toString(),
+    	System.out.printf("\tP { %f } I { %f } D { %f }%n%n",
     			acceleration[0], acceleration[1], acceleration[2]);
     }
     
     private void humanityDestroyedTrigger() {
     	gyro.close();
-    	ir.close();
+    	//ir.close();
     	motors[MOTOR_LEFT].close();
     	motors[MOTOR_RIGHT].close();
     }
     
     private void areHumansDestroyedYet() {
-    	if (Date.from(Instant.now()).after(apocalypseTime)) {
+    	if (fromStart >= 150000) {
     		this.humanityDestroyed = true;
     	}
     }
