@@ -43,29 +43,29 @@ public class EV3_Terminator {
 	private static final int GYRO_RATE = 1;
 	private static final int MOTOR_SPEED = 2;
 	private static final int MOTOR_ACCELERATION = 3;
+	private static final int MOTOR_MAXSPEED = 4;
 	
 	private static final int MOTOR_LEFT = 0;
 	private static final int MOTOR_RIGHT = 1;
 	
 	// math
-	private static final float ROBOT_MASS = 1.0f; // (grams)
-	private static final float ROBOT_LENGTH = 1.0f; // (m) from rotation pt to the end
-	private static final float ROBOT_LENGTH_CENTER_OF_MASS = 1.0f; // (m) from rotation pt the center of mass
-	private static final float ROBOT_WHEEL_RADIUS = 1.0f; // (m)
-	private static final float ROBOT_BALANCE_POINT = 1.0f; // (rad) position of balance
+	private static final float ROBOT_MASS = -1.0000001f; // (kg) TBA
+	private static final float ROBOT_LENGTH = -1.0000001f; // (m) TBA from rotation pt to the end
+	private static final float ROBOT_LENGTH_CENTER_OF_MASS = 1.0f; // (m) TBA from rotation pt the center of mass
+	private static final float ROBOT_WHEEL_RADIUS = -1.0000001f; // (m) TBA
+	private static final float ROBOT_BALANCE_POINT = -1.0000001f; // (rad) position of balance
 	private static final float G_GRAVITY = 9.80665f; // (m/s^2)
 	
 	private static final float COEFF_P = 1.0f;
 	private static final float COEFF_D = 0.5f;
 	private static final float COEFF_I = 0.5f;
 	
-	private static final float MAX_ACCELERATION = 100.0f; // (rad) TBA
-	private static final float INT_THRESHOLD = 100.f; // (rad) TBA
+	private static final float INT_THRESHOLD = 100.00001f; // (rad) TBA
 	
 	private float integralSum = 0.0f; // partial sum for I
 	
 	// buffers
-	private float[] readings = new float[4];
+	private float[] readings = new float[5];
 	private float[] sample = new float[1];
 	
 	// sensors
@@ -93,15 +93,15 @@ public class EV3_Terminator {
     		populateReadings();
     		
     		// Step 2: aim
-    		float[] acceleration = aimTheMissile();
+    		float[] speed = aimTheMissile();
     		
     		// Step 3: shoot
-    		shootTheMissile(acceleration);
+    		shootTheMissile(speed);
     		
     		// status reports
     		if (_DEBUG_ || ticks >= STATUS_REPORT_FREQUENCY) {
     			ticks = 0;
-    			reportStatus(acceleration);
+    			reportStatus(speed);
     		}
     		ticks++;
     		
@@ -124,11 +124,15 @@ public class EV3_Terminator {
         // Hello Moto
         sample[0] = (float)motors[MOTOR_LEFT].getSpeed();
         sample[0] += (float)motors[MOTOR_RIGHT].getSpeed();
-        readings[MOTOR_SPEED] = sample[0] / 2;
+        readings[MOTOR_SPEED] = toRadians(sample[0] / 2);
         
         sample[0] = (float)motors[MOTOR_LEFT].getAcceleration();
         sample[0] += (float)motors[MOTOR_RIGHT].getAcceleration();
-        readings[MOTOR_ACCELERATION] = sample[0] / 2;
+        readings[MOTOR_ACCELERATION] = toRadians(sample[0] / 2);
+        
+        sample[0] = (float)motors[MOTOR_LEFT].getMaxSpeed();
+        sample[0] += (float)motors[MOTOR_RIGHT].getMaxSpeed();
+        readings[MOTOR_MAXSPEED] = toRadians(sample[0] / 2);
     }
     
     private float[] aimTheMissile() {
@@ -153,16 +157,16 @@ public class EV3_Terminator {
     	return res;
     }
     
-    private void shootTheMissile(float[] acceleration) {
+    private void shootTheMissile(float[] speed) {
     	float finalization = (float) ((
-    			(acceleration[0] * COEFF_P) +
-    			(acceleration[1] * COEFF_I) +
-    			(acceleration[2] * COEFF_D)
+    			(speed[0] * COEFF_P) +
+    			(speed[1] * COEFF_I) +
+    			(speed[2] * COEFF_D)
     			)
     			* 180 / Math.PI); //rad to deg
     	
-    	motors[MOTOR_LEFT].setAcceleration(toDegrees(
-    			(finalization <= MAX_ACCELERATION) ? finalization : MAX_ACCELERATION
+    	motors[MOTOR_LEFT].setSpeed(toDegrees(
+    			(finalization <= readings[MOTOR_MAXSPEED]) ? finalization : readings[MOTOR_MAXSPEED]
     			));
     }
     
@@ -187,24 +191,27 @@ public class EV3_Terminator {
     	// compDist gives us an angle on unit circle, so we adapt it to match actual wheels
     	double compensationAngle = compensationDistance / ROBOT_WHEEL_RADIUS;
     	
-    	return (float)compensationAngle;
+    	// calculate speed at which we have to move to cover this distance in dt time
+    	double requiredSpeed = compensationAngle / dt;
+    	
+    	return (float)requiredSpeed;
     }
     
     private float toRadians(float degrees){ return (float)( (degrees * Math.PI) / 180 ); }
     private int toDegrees(float radians) { return (int)( (radians * 180) / Math.PI ); }
     
     // service functions
-    private void reportStatus(float[] acceleration) {
+    private void reportStatus(float[] speed) {
     	printReadings();
-    	printCorrection(acceleration);
-    	//TBA: print planned changes to motors
+    	printCorrection(speed);
     }
     
     private void printReadings() {
-    	System.out.printf("[%s]\tGYRO { A: %f, R: %f } MOTO { S: %f, A: %f }%n",
+    	System.out.printf("[%s]\tGYRO { A: %f, R: %f } MOTO { S: %f, A: %f M: %f }%n",
     			Date.from(Instant.now()).toString(),
     			readings[GYRO_ANGLE], readings[GYRO_RATE],
-    			readings[MOTOR_SPEED], readings[MOTOR_ACCELERATION]);
+    			readings[MOTOR_SPEED], readings[MOTOR_ACCELERATION],
+    			readings[MOTOR_MAXSPEED]);
     }
     
     private void printCorrection(float[] acceleration) {
