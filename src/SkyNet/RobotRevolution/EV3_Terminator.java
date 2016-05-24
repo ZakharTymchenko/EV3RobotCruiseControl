@@ -33,7 +33,7 @@ public class EV3_Terminator {
 	private long fromStart = 0;
 	
 	// constants
-	private static final int FREQUENCY = 75; // every (ms)
+	private static final int FREQUENCY = 100; // every (ms)
 	private static final int STATUS_REPORT_FREQUENCY = 5; // (ticks) of FREQUENCY
 	
 	private static final int GYRO_ANGLE = 0; // indexes
@@ -120,8 +120,8 @@ public class EV3_Terminator {
         readings[GYRO_RATE] = toRadians(sample[0]);
         
         // Hello Moto
-        sample[0] = (float)motors[MOTOR_LEFT].getSpeed();
-        sample[0] += (float)motors[MOTOR_RIGHT].getSpeed();
+        sample[0] = (float)motors[MOTOR_LEFT].getRotationSpeed();
+        sample[0] += (float)motors[MOTOR_RIGHT].getRotationSpeed();
         readings[MOTOR_SPEED] = toRadians(sample[0] / 2);
         
         sample[0] = (float)motors[MOTOR_LEFT].getAcceleration();
@@ -156,23 +156,26 @@ public class EV3_Terminator {
     	return res;
     }
     
-    private void shootTheMissile(float[] speed) {
-    	float finalization = (float) (
-    			(speed[0] * COEFF_P) +
-    			(speed[1] * COEFF_I) +
-    			(speed[2] * COEFF_D)
+    private void shootTheMissile(float[] speeds) {
+    	float speed = (float) (
+    			(speeds[0] * COEFF_P) +
+    			(speeds[1] * COEFF_I) +
+    			(speeds[2] * COEFF_D)
     			);
     	
-    	boolean signum = finalization > 0;
-    	finalization = Math.abs(finalization);
-    	finalization = toDegrees(
-    			(finalization <= readings[MOTOR_MAXSPEED]) ? finalization : readings[MOTOR_MAXSPEED]
-    			);
+    	boolean signum = speed > 0;
+    	speed = Math.abs(speed);
     	
-    	motors[MOTOR_LEFT].setSpeed(finalization);
-    	motors[MOTOR_RIGHT].setSpeed(finalization);
+    	float acceleration = calculateAcceleration(speed);
+    	speed = toDegrees((speed <= readings[MOTOR_MAXSPEED]) ? speed : readings[MOTOR_MAXSPEED]);
     	
+    	int iAcceleration = toDegrees((acceleration <= 6000) ? acceleration : 6000);
     	
+    	motors[MOTOR_LEFT].setSpeed(speed);
+    	motors[MOTOR_RIGHT].setSpeed(speed);
+    	
+    	motors[MOTOR_LEFT].setAcceleration(iAcceleration);
+    	motors[MOTOR_RIGHT].setAcceleration(iAcceleration);
     	
     	if (signum) {
     		motors[MOTOR_LEFT].forward();
@@ -181,7 +184,11 @@ public class EV3_Terminator {
     		motors[MOTOR_LEFT].backward();
     		motors[MOTOR_RIGHT].backward();
     	}
-    	
+    }
+    
+    private float calculateAcceleration(float speed) {
+    	float dv = Math.abs(speed - readings[MOTOR_SPEED]);
+    	return (int)(dv * FREQUENCY);
     }
     
     private float blackMagic(float angle) {
