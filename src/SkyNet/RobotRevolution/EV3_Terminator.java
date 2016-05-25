@@ -57,10 +57,11 @@ public class EV3_Terminator {
 	private static final float COEFF_D = 0.2f * 0;
 	private static final float COEFF_I = 0.1f * 0;
 	
-	private static final float INT_THRESHOLD = 0.2f; // (rad) 12 deg
+	private static final float INT_THRESHOLD = 0.2f; // (rad) = 12 deg
 	
 	private float integralSum = 0.0f; // partial sum for I
 	private float lastError = 0.0f;
+	private float lastDiffError = 0.0f;
 	
 	// buffers
 	private float[] readings = new float[5];
@@ -138,19 +139,21 @@ public class EV3_Terminator {
     	float err = ROBOT_BALANCE_POINT - readings[GYRO_ANGLE];
     	
     	// Proportional
-    	res[0] = blackMagic(err);
+    	res[0] = blackMagic(err, (err - lastError));
     	
     	// Integral
     	if (Math.abs(err) > INT_THRESHOLD) {
     		integralSum = 0.0f;
     		res[1] = 0.0f;
     	} else {
+    		res[1] = blackMagic(integralSum + err, integralSum);
     		integralSum += err;
-    		res[1] = blackMagic(integralSum);
     	}
     	
     	// Differential
-    	res[2] = blackMagic(err - lastError);
+    	res[2] = blackMagic(err - lastError, (err - lastError) - lastDiffError);
+    	
+    	lastDiffError = (err - lastError);
     	lastError = err;
     	
     	return res;
@@ -191,9 +194,7 @@ public class EV3_Terminator {
     	return (int)(dv * FREQUENCY);
     }
     
-    private float blackMagic(float angle) {
-    	double d1theta_dt1 = 0.0; // TBA
-    	
+    private float blackMagic(float angle, float d1theta_dt1) {    	
     	// second derivative of our angle
     	double d2theta_dt2 = (3 * G_GRAVITY * Math.sin(angle))
     			/ (2 * ROBOT_LENGTH_CENTER_OF_MASS);
