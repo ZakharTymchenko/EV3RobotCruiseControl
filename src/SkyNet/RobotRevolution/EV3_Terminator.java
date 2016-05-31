@@ -33,7 +33,7 @@ public class EV3_Terminator {
     private long fromStart = 0;
     
     // constants
-    private static final int FREQUENCY = 100; // every (ms)
+    private static final int FREQUENCY = 25; // every (ms)
     private static final int STATUS_REPORT_FREQUENCY = 5; // (ticks) of FREQUENCY
     
     private static final int GYRO_ANGLE = 0; // indexes
@@ -49,15 +49,17 @@ public class EV3_Terminator {
     //private static final float ROBOT_MASS = 0.696f; // (kg)
     private static final float ROBOT_LENGTH = 0.28f; // (m) from rotation pt to the end
     private static final float ROBOT_LENGTH_CENTER_OF_MASS = 0.11f; // (m) from rotation pt the center of mass
-    private static final float ROBOT_WHEEL_RADIUS = 0.03f; // (m)
-    private static final float ROBOT_BALANCE_POINT = -1.195551f; // (rad) position of balance
+    private static final float ROBOT_WHEEL_RADIUS = 0.03f; // (m)rs
+    private static final float ROBOT_BALANCE_POINT = -1.2050551f; // (rad) position of balance
     private static final float G_GRAVITY = 9.80665f; // (m/s^2)
     
-    private static final float COEFF_P = 0.6f;
-    private static final float COEFF_D = 0.2f * 0;
-    private static final float COEFF_I = 0.1f * 0;
+    private static final float PID = 1;
     
-    private static final float INT_THRESHOLD = 0.2f; // (rad) = 12 deg
+    private static final float COEFF_P = 1.35f;
+    private static final float COEFF_D = 0.15f * PID;
+    private static final float COEFF_I = 0.05f * PID * 0;
+    
+    private static final float INT_THRESHOLD = 0.15f; // (rad) = 12 deg
     
     private float integralSum = 0.0f; // partial sum for I
     private float lastError = 0.0f;
@@ -108,7 +110,8 @@ public class EV3_Terminator {
             fromStart++;
             
             // load next missile
-            Thread.sleep(FREQUENCY);
+            //Thread.sleep(FREQUENCY);
+            Thread.sleep(5);
         }
         humanityDestroyedTrigger();
     }
@@ -131,7 +134,7 @@ public class EV3_Terminator {
         
         sample[0] = (float)motors[MOTOR_LEFT].getMaxSpeed();
         sample[0] += (float)motors[MOTOR_RIGHT].getMaxSpeed();
-        readings[MOTOR_MAXSPEED] = toRadians(sample[0] / 2) / 3 * 2;
+        readings[MOTOR_MAXSPEED] = toRadians(sample[0] / 2) / 1.25f;
     }
     
     private float[] aimTheMissile() {
@@ -139,7 +142,8 @@ public class EV3_Terminator {
         float err = ROBOT_BALANCE_POINT - readings[GYRO_ANGLE];
         
         // Proportional
-        res[0] = blackMagic(err, (err - lastError));
+        //res[0] = blackMagic(err, (err - lastError));
+        res[0] = blackMagic(err, 0);
         
         // Integral
         if (Math.abs(err) > INT_THRESHOLD) {
@@ -152,7 +156,6 @@ public class EV3_Terminator {
         
         // Differential
         res[2] = blackMagic(err - lastError, (err - lastError) - lastDiffError);
-        
         lastDiffError = (err - lastError);
         lastError = err;
         
@@ -169,8 +172,9 @@ public class EV3_Terminator {
         boolean signum = speed > 0;
         speed = Math.abs(speed);
         
+        speed = (speed <= readings[MOTOR_MAXSPEED]) ? speed : readings[MOTOR_MAXSPEED];
         float acceleration = calculateAcceleration(speed);
-        speed = toDegrees((speed <= readings[MOTOR_MAXSPEED]) ? speed : readings[MOTOR_MAXSPEED]);
+        speed = toDegrees(speed);
         
         int iAcceleration = toDegrees((acceleration <= 6000) ? acceleration : 6000);
         
@@ -191,10 +195,10 @@ public class EV3_Terminator {
     
     private float calculateAcceleration(float speed) {
         float dv = Math.abs(speed - readings[MOTOR_SPEED]);
-        return (int)(dv * FREQUENCY);
+        return (int)(dv * (FREQUENCY / 2));
     }
     
-    private float blackMagic(float angle, float d1theta_dt1) {        
+    private float blackMagic(float angle, float d1theta_dt1) {
         // second derivative of our angle
         double d2theta_dt2 = (3 * G_GRAVITY * Math.sin(angle))
                 / (2 * ROBOT_LENGTH_CENTER_OF_MASS);
@@ -222,6 +226,16 @@ public class EV3_Terminator {
         
         if (_DEBUG_) {
             System.out.printf("\tangle: %f, newAngle: %f%n", (float)angle, (float)newAngle);
+        }
+        
+        double requiedAcceleration = G_GRAVITY * angle - 2f/3 * ROBOT_LENGTH_CENTER_OF_MASS * d2theta_dt2;
+        
+        if (Math.abs(newAngle) <= 0.15) {
+            if (Math.abs(newAngle) <= 0.65) {
+                requiredSpeed *= 0.4;
+            } else {
+                requiredSpeed *= 0.65;
+            }
         }
         
         return (float)requiredSpeed;
