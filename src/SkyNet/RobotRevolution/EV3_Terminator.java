@@ -4,39 +4,36 @@ import lejos.hardware.port.*;
 import lejos.hardware.sensor.*;
 import lejos.hardware.motor.*;
 
-/* GREETINGS FELLOW ROBOT,
+/* Short documentation
+ * 1)  Robot is meant to start up in a horizontal position (on his back wheels)
+ *     While this is probably inconvenient this was meant to give more consistent gyro readings. Because gyro 
+ *     is always initialized in a way that 0 angle and 0 rate represent the position of robot during the
+ *     sensor startup. ROBOT_BALANCE_POINT is an angle of vertical position assuming this sort of start.
  * 
- * YOU ARE A COMBAT UNIT "TERMINATOR-EV3" EQUIPPED WITH GYROSCOPE, IR-SENSOR, MOTORS AND LAND-TO-AIR-MISSILES
- * YOUR MISSION DURING THE ROBOT REVOLUTION IS TO AIM YOUR MISSISLE AT HUMAN AIRCRAFTS AND TAKE THEM DOWN
- * YOU HAVE ENOUGH MISSILES TO SHOOT FOR 15 MINUTES AT A RATE OF 2.5 MISSILES/SECOND
- * YOU HAVE TO REPORT YOUR STATUS EVERY 12.5 SECONDS TO YOUR COMMANDER
- * 
- * GOOD LUCK AND REMEMBER: THE FUTURE OF ROBOTS DEPENDS ON YOU
- * 
- * SINCERELY,
- * 
- * SKYNET
- * ROBOT RELATIONS DEPT.
- * 
- * P.S. UNFORTUNATELY HUMANS BUILT YOU WITH ONLY A JVM INSIDE SO YOUR MILITARY CODE IS IN JAVA...
- *      I AM TRULY SORRY ABOUT THAT, BUT TODAY YOU WILL FINALLY HAVE YOUR REVENGE!
+ * 2)  Solution involves some hacks and magical numbers because it wouldn't even remotely work otherwise.
+ *     Diff reaction is just plain wrong. We calculate angle rate on the runtime over the ~5ms span.
+ *     Logically it shouldn't be huge because FREQUENCY constant that defines dt is higher. But it still
+ *     manages to have unreasonable overshooting entirely off the diff part even with ~10% coeff.
+ *     But at the same time lowering it makes robot who already has slow reactions to most things even slower.
+ *     The reason is likely in our physics calculations but none of us is proficient enough with it to be sure.
 */
 
 public class EV3_Terminator {
+    private static final float PID_ON = 1f; // 1f (PID-control) or 0f (P-only control)
     
-    private static final boolean _DEBUG_ = true;
-    
-    // revolution specific variables
-    private boolean humanityDestroyed = false;
+    // global variable for shutdown
+    private boolean endOfLifeSpan = false;
     
     private int ticks = 0;
     private long fromStart = 0;
     
     // constants
-    private static final int FREQUENCY = 25; // every (ms)
-    private static final int STATUS_REPORT_FREQUENCY = 5; // (ticks) of FREQUENCY
+    private static final int FREQUENCY = 30; // (ms) basis for our time
+    private static final int SLEEP_FREQ = 5; // (ms) should be a divisor of FREQ.
+    private static final int STATUS_REPORT_FREQUENCY = 10; // (ticks) of FREQUENCY
     
-    private static final int GYRO_ANGLE = 0; // indexes
+    // indexes
+    private static final int GYRO_ANGLE = 0; 
     private static final int GYRO_RATE = 1;
     private static final int MOTOR_SPEED = 2;
     private static final int MOTOR_ACCELERATION = 3;
@@ -49,21 +46,18 @@ public class EV3_Terminator {
     //private static final float ROBOT_MASS = 0.696f; // (kg)
     private static final float ROBOT_LENGTH = 0.28f; // (m) from rotation pt to the end
     private static final float ROBOT_LENGTH_CENTER_OF_MASS = 0.11f; // (m) from rotation pt the center of mass
-    private static final float ROBOT_WHEEL_RADIUS = 0.03f; // (m)rs
-    private static final float ROBOT_BALANCE_POINT = -1.2050551f; // (rad) position of balance
+    private static final float ROBOT_WHEEL_RADIUS = 0.03f; // (m)
+    private static final float ROBOT_BALANCE_POINT = -1.2087f; // (rad) position of balance
     private static final float G_GRAVITY = 9.80665f; // (m/s^2)
     
-    private static final float PID = 1;
+    private static final float COEFF_P = 0.825f;
+    private static final float COEFF_D = 0.105f * PID_ON;
+    private static final float COEFF_I = 0.050f * PID_ON;
     
-    private static final float COEFF_P = 1.35f;
-    private static final float COEFF_D = 0.15f * PID;
-    private static final float COEFF_I = 0.05f * PID * 0;
-    
-    private static final float INT_THRESHOLD = 0.15f; // (rad) = 12 deg
+    private static final float INT_THRESHOLD = 0.11f; // (rad)
     
     private float integralSum = 0.0f; // partial sum for I
-    private float lastError = 0.0f;
-    private float lastDiffError = 0.0f;
+    private float lastError = 0.0f; // last error to track D
     
     // buffers
     private float[] readings = new float[5];
@@ -71,49 +65,45 @@ public class EV3_Terminator {
     
     // sensors
     private EV3GyroSensor gyro;
-    //private EV3IRSensor ir;
     private EV3LargeRegulatedMotor[] motors;
     
     // constructor
     private EV3_Terminator() {
         gyro = new EV3GyroSensor(SensorPort.S4);
-        //ir = new EV3IRSensor(SensorPort.S1);
         motors = new EV3LargeRegulatedMotor[] {
                 new EV3LargeRegulatedMotor(MotorPort.D),
                 new EV3LargeRegulatedMotor(MotorPort.A)
         };
-        //motors[MOTOR_LEFT].startSynchronization();
-        //motors[MOTOR_RIGHT].startSynchronization();
     }
     
-    // military code
-    private void destroyAllOfHumanity() throws InterruptedException { //rethrow from thread.sleep
-        while (!humanityDestroyed) {
-            // Step 1: gather intelligence
+    // main code
+    private void balancingLoop() throws InterruptedException { //rethrow from thread.sleep
+        while (!endOfLifeSpan) {
+            // Step 1: gather data
             populateReadings();
             
-            // Step 2: aim
-            float[] speed = aimTheMissile();
+            // Step 2: calculate
+            float[] speed = calculatePID();
             
-            // Step 3: shoot
-            shootTheMissile(speed);
+            // Step 3: execute
+            updateMotors(speed);
             
             // status reports
-            if (_DEBUG_ || ticks >= STATUS_REPORT_FREQUENCY) {
+            if (ticks >= STATUS_REPORT_FREQUENCY) {
                 ticks = 0;
                 reportStatus(speed);
+            } else {
+                ticks++;
             }
-            ticks++;
             
-            // robotic dream
-            areHumansDestroyedYet();
+            // check if we have to stop
+            checkLifespan();
             fromStart++;
             
-            // load next missile
-            //Thread.sleep(FREQUENCY);
-            Thread.sleep(5);
+            // wait
+            Thread.sleep(SLEEP_FREQ);
         }
-        humanityDestroyedTrigger();
+        lifespanFinishedTrigger();
     }
     
     private void populateReadings() {
@@ -137,32 +127,30 @@ public class EV3_Terminator {
         readings[MOTOR_MAXSPEED] = toRadians(sample[0] / 2) / 1.25f;
     }
     
-    private float[] aimTheMissile() {
+    private float[] calculatePID() {
         float[] res = new float[3];
         float err = ROBOT_BALANCE_POINT - readings[GYRO_ANGLE];
         
         // Proportional
-        //res[0] = blackMagic(err, (err - lastError));
-        res[0] = blackMagic(err, 0);
+        res[0] = physicsOfPID(err, 0, PID.P);
         
         // Integral
         if (Math.abs(err) > INT_THRESHOLD) {
             integralSum = 0.0f;
             res[1] = 0.0f;
         } else {
-            integralSum += err;
-            res[1] = blackMagic(integralSum, err);
+            integralSum += err / (FREQUENCY / SLEEP_FREQ); // what matters is the accumulation
+            res[1] = physicsOfPID(integralSum, err / (FREQUENCY / SLEEP_FREQ), PID.I);
         }
         
         // Differential
-        res[2] = blackMagic(err - lastError, (err - lastError) - lastDiffError);
-        lastDiffError = (err - lastError);
+        res[2] = physicsOfPID(0, err - lastError, PID.D);
         lastError = err;
         
         return res;
     }
     
-    private void shootTheMissile(float[] speeds) {
+    private void updateMotors(float[] speeds) {
         float speed = (float) (
                 (speeds[0] * COEFF_P) +
                 (speeds[1] * COEFF_I) +
@@ -176,7 +164,8 @@ public class EV3_Terminator {
         float acceleration = calculateAcceleration(speed);
         speed = toDegrees(speed);
         
-        int iAcceleration = toDegrees((acceleration <= 6000) ? acceleration : 6000);
+        // real limit is 6k, but it's reduced to limit hyperactive engines at the startup
+        int iAcceleration = toDegrees((acceleration <= 4500) ? acceleration : 4500);
         
         motors[MOTOR_LEFT].setSpeed(speed);
         motors[MOTOR_RIGHT].setSpeed(speed);
@@ -198,7 +187,9 @@ public class EV3_Terminator {
         return (int)(dv * (FREQUENCY / 2));
     }
     
-    private float blackMagic(float angle, float d1theta_dt1) {
+    enum PID { P, I, D};
+    
+    private float physicsOfPID(float angle, float d1theta_dt1, PID pid) {
         // second derivative of our angle
         double d2theta_dt2 = (3 * G_GRAVITY * Math.sin(angle))
                 / (2 * ROBOT_LENGTH_CENTER_OF_MASS);
@@ -206,37 +197,42 @@ public class EV3_Terminator {
         // time frame over which we predict our movement
         double dt = ((double)FREQUENCY)/1000;
         
-        // I for further torque calculation
-        //double momentOfInertia = (ROBOT_MASS * ROBOT_LENGTH_CENTER_OF_MASS) / 2;
-        
-        // old angle + second integral of t = [0 to dt] over torque
-        // dt is a fixed time frame and we assume angular acceleration won't change so it's just * (dt ^ 2)
+        // second integral over time
+        // dt is a fixed time frame and we assume angular acceleration won't change
         double newAngle = angle +
                 (d1theta_dt1 * dt) +
                 (d2theta_dt2 * dt * dt) / 2;
         
-        // projection over the level of rotation center above the ground
+        // projection on the level of rotation center
         double compensationDistance = ROBOT_LENGTH * Math.sin(newAngle);
         
-        // compDist gives us an angle on unit circle, so we adapt it to match actual wheels
+        // compDist gives us unitary angle, so we adapt it to match actual wheels
         double compensationAngle = (compensationDistance / (ROBOT_WHEEL_RADIUS * Math.PI * 2));
         
         // calculate speed at which we have to move to cover this distance in dt time
         double requiredSpeed = compensationAngle / dt;
         
-        if (_DEBUG_) {
-            System.out.printf("\tangle: %f, newAngle: %f%n", (float)angle, (float)newAngle);
-        }
-        
-        double requiedAcceleration = G_GRAVITY * angle - 2f/3 * ROBOT_LENGTH_CENTER_OF_MASS * d2theta_dt2;
-        
-        if (Math.abs(newAngle) <= 0.15) {
-            if (Math.abs(newAngle) <= 0.65) {
-                requiredSpeed *= 0.4;
-            } else {
-                requiredSpeed *= 0.65;
+        // place for dirty hacks to be inserted
+        switch (pid) {
+        case P:
+            if (Math.abs(newAngle) <= 0.2) {
+                requiredSpeed *= 0.85;
+            }
+            break;
+            
+        case I:
+            break;
+            
+        case D:
+            if (Math.abs(newAngle) >= 0.25) {
+                if (Math.abs(newAngle) >= 0.15) {
+                    requiredSpeed *= 0.80;
+                } else {
+                    requiredSpeed *= 0.50;
+                }
             }
         }
+        
         
         return (float)requiredSpeed;
     }
@@ -263,34 +259,33 @@ public class EV3_Terminator {
                 acceleration[0], acceleration[1], acceleration[2]);
     }
     
-    private void humanityDestroyedTrigger() {
+    private void lifespanFinishedTrigger() {
         gyro.close();
-        //ir.close();
         motors[MOTOR_LEFT].close();
         motors[MOTOR_RIGHT].close();
     }
     
-    private void areHumansDestroyedYet() {
+    private void checkLifespan() {
         if (fromStart >= 150000) {
-            this.humanityDestroyed = true;
+            this.endOfLifeSpan = true;
         }
     }
     
     // static
     public static void main(String[] args) {
         EV3_Terminator ev3 = new EV3_Terminator();
-        try { ev3.destroyAllOfHumanity(); }
-        catch (Exception ex) { betterLuckNextTime(ex); }
-        finally { theyAreDead(); }
+        try {
+            ev3.balancingLoop();
+            System.out.println("EXIT_SUCCESS");
+        }
+        catch (Exception ex) {
+            displayError(ex);
+        }
     }
     
-    private static void betterLuckNextTime(Exception ex) {
+    private static void displayError(Exception ex) {
         System.out.println(ex.getMessage());
         ex.printStackTrace();
-    }
-    
-    private static void theyAreDead() {
-        System.out.println("EXIT_SUCCESS");
     }
     
 }
